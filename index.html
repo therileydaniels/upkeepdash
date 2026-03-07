@@ -116,6 +116,41 @@
     <!-- Toast Container -->
     <div id="toast-container" class="toast-container"></div>
 
+    <!-- FAB — Add Item -->
+    <button id="fab-add" class="fab" aria-label="Add item">+</button>
+
+    <!-- Add Item Modal -->
+    <div id="add-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2 class="modal-title">Add Item</h2>
+
+        <label class="form-label" for="add-name">Item Name</label>
+        <input class="form-input" type="text" id="add-name" placeholder="e.g. Oil Change" required>
+
+        <label class="form-label" for="add-category">Category</label>
+        <select class="form-input form-select" id="add-category">
+          <option value="Car">🚗 Car</option>
+          <option value="Health">🏥 Health</option>
+          <option value="Grooming">✂️ Grooming</option>
+          <option value="Home">🏠 Home</option>
+        </select>
+
+        <label class="form-label" for="add-frequency">Frequency (days)</label>
+        <input class="form-input" type="number" id="add-frequency" placeholder="e.g. 90" min="1" required>
+
+        <label class="form-label" for="add-notes">Notes (optional)</label>
+        <textarea class="form-input form-textarea" id="add-notes" placeholder="Any reminders or preferences..." rows="2"></textarea>
+
+        <label class="form-label" for="add-cost">Cost (optional)</label>
+        <input class="form-input" type="number" id="add-cost" placeholder="$0.00" step="0.01" min="0">
+
+        <div class="modal-actions">
+          <button class="btn-modal btn-cancel" id="add-cancel">Cancel</button>
+          <button class="btn-modal btn-submit" id="add-submit">Add Item</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <script src="app.js" defer></script>

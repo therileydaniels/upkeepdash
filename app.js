@@ -443,7 +443,19 @@ function getBadgeInfo(item) {
 }
 
 // ================================================================
-// MARK DONE
+// GENERIC PROXY HELPER
+// ================================================================
+function apiCall(action, params) {
+  var token = localStorage.getItem(CONFIG.STORAGE_KEYS.DEVICE_TOKEN);
+  var url = CONFIG.API_URL + '?action=' + action + '&token=' + encodeURIComponent(token);
+  Object.keys(params || {}).forEach(function(key) {
+    url += '&' + key + '=' + encodeURIComponent(params[key]);
+  });
+  return fetch(url).then(function(r) { return r.json(); });
+}
+
+// ================================================================
+// MARK DONE (uses generic proxy)
 // ================================================================
 function performMarkDone(itemId, cost, confirmBtn) {
   if (!isOnline) {
@@ -453,25 +465,68 @@ function performMarkDone(itemId, cost, confirmBtn) {
 
   confirmBtn.classList.add('btn-loading');
 
-  var token = localStorage.getItem(CONFIG.STORAGE_KEYS.DEVICE_TOKEN);
-  var url = CONFIG.API_URL + '?action=markDone&token=' + encodeURIComponent(token) + '&itemId=' + encodeURIComponent(itemId);
-  if (cost !== null) url += '&cost=' + cost;
+  // Find the item in currentItems for its data
+  var item = currentItems.find(function(i) { return i.id === itemId; });
+  if (!item) {
+    showToast("Couldn\u2019t find item", 'error');
+    confirmBtn.classList.remove('btn-loading');
+    return;
+  }
 
-  fetch(url)
-    .then(function(response) { return response.json(); })
-    .then(function(data) {
-      confirmBtn.classList.remove('btn-loading');
-      if (data.success) {
-        if (data.calendarSynced === false) {
-          showToast('Done \u2014 but calendar sync failed', 'error');
-        } else {
-          showToast('Item marked done \u2713');
-        }
-        expandedCardId = null;
-        fetchItems(token);
-      } else {
-        showToast("Couldn\u2019t save \u2014 try again", 'error');
+  var today = new Date().toISOString().split('T')[0];
+  var calendarSynced = true;
+
+  // 1. Update Notion: Last Done, costs, clear Last Reminder Sent
+  var properties = {
+    'Last Done': { date: { start: today } },
+    'Last Reminder Sent': { date: null }
+  };
+  if (cost !== null) {
+    properties['Last Cost'] = { number: cost };
+    properties['Total Cost'] = { number: (item.totalCost || 0) + cost };
+  }
+
+  apiCall('updatePage', { pageId: itemId, properties: JSON.stringify(properties) })
+    .then(function() {
+      // 2. Delete old calendar event
+      if (item.calendarEventId) {
+        return apiCall('deleteCalendarEvent', { eventId: item.calendarEventId });
       }
+    })
+    .then(function() {
+      // 3. Create new calendar event at Next Due
+      if (item.frequencyDays) {
+        var nextDue = new Date(today + 'T00:00:00');
+        nextDue.setDate(nextDue.getDate() + item.frequencyDays);
+        var nextDueISO = nextDue.toISOString().split('T')[0];
+        var cat = getCategoryInfo(item.category);
+        var title = cat.icon + ' ' + item.name + ' Due';
+        return apiCall('createCalendarEvent', { title: title, date: nextDueISO });
+      }
+      return { success: false };
+    })
+    .then(function(calResult) {
+      // 4. Store new Calendar Event ID in Notion
+      if (calResult && calResult.eventId) {
+        return apiCall('updatePage', {
+          pageId: itemId,
+          properties: JSON.stringify({
+            'Calendar Event ID': { rich_text: [{ text: { content: calResult.eventId } }] }
+          })
+        });
+      } else {
+        calendarSynced = false;
+      }
+    })
+    .then(function() {
+      confirmBtn.classList.remove('btn-loading');
+      if (!calendarSynced) {
+        showToast('Done \u2014 but calendar sync failed', 'error');
+      } else {
+        showToast('Item marked done \u2713');
+      }
+      expandedCardId = null;
+      fetchItems(localStorage.getItem(CONFIG.STORAGE_KEYS.DEVICE_TOKEN));
     })
     .catch(function() {
       confirmBtn.classList.remove('btn-loading');
@@ -575,10 +630,116 @@ window.addEventListener('offline', function() {
 });
 
 // ================================================================
+// ADD ITEM MODAL
+// ================================================================
+function showAddItemModal() {
+  document.getElementById('add-modal').classList.remove('hidden');
+  document.getElementById('add-name').focus();
+}
+
+function hideAddItemModal() {
+  document.getElementById('add-modal').classList.add('hidden');
+  document.getElementById('add-name').value = '';
+  document.getElementById('add-category').value = 'Car';
+  document.getElementById('add-frequency').value = '';
+  document.getElementById('add-notes').value = '';
+  document.getElementById('add-cost').value = '';
+  var submitBtn = document.getElementById('add-submit');
+  submitBtn.classList.remove('btn-loading');
+  submitBtn.disabled = false;
+}
+
+function submitNewItem() {
+  var name = document.getElementById('add-name').value.trim();
+  var category = document.getElementById('add-category').value;
+  var frequency = parseInt(document.getElementById('add-frequency').value, 10);
+  var notes = document.getElementById('add-notes').value.trim();
+  var costVal = document.getElementById('add-cost').value;
+  var cost = costVal ? parseFloat(costVal) : null;
+
+  if (!name || !frequency) {
+    showToast('Name and frequency are required', 'error');
+    return;
+  }
+
+  if (!isOnline) {
+    showToast('Cannot add items while offline', 'error');
+    return;
+  }
+
+  var submitBtn = document.getElementById('add-submit');
+  submitBtn.classList.add('btn-loading');
+  submitBtn.disabled = true;
+
+  var today = new Date().toISOString().split('T')[0];
+
+  // Build Notion properties
+  var properties = {
+    'Item Name': { title: [{ text: { content: name } }] },
+    'Category': { select: { name: category } },
+    'Frequency (days)': { number: frequency },
+    'Last Done': { date: { start: today } }
+  };
+  if (notes) {
+    properties['Notes'] = { rich_text: [{ text: { content: notes } }] };
+  }
+  if (cost !== null) {
+    properties['Last Cost'] = { number: cost };
+    properties['Total Cost'] = { number: cost };
+  }
+
+  var newPageId = null;
+
+  // 1. Create page in Notion
+  apiCall('createPage', { properties: JSON.stringify(properties) })
+    .then(function(data) {
+      if (!data.success || !data.pageId) throw new Error('Create failed');
+      newPageId = data.pageId;
+
+      // 2. Create calendar event at Next Due
+      var nextDue = new Date(today + 'T00:00:00');
+      nextDue.setDate(nextDue.getDate() + frequency);
+      var nextDueISO = nextDue.toISOString().split('T')[0];
+      var cat = getCategoryInfo(category);
+      var title = cat.icon + ' ' + name + ' Due';
+      return apiCall('createCalendarEvent', { title: title, date: nextDueISO });
+    })
+    .then(function(calResult) {
+      // 3. Store Calendar Event ID in Notion
+      if (calResult && calResult.eventId) {
+        return apiCall('updatePage', {
+          pageId: newPageId,
+          properties: JSON.stringify({
+            'Calendar Event ID': { rich_text: [{ text: { content: calResult.eventId } }] }
+          })
+        });
+      }
+    })
+    .then(function() {
+      showToast('Item added \u2713');
+      hideAddItemModal();
+      fetchItems(localStorage.getItem(CONFIG.STORAGE_KEYS.DEVICE_TOKEN));
+    })
+    .catch(function() {
+      showToast("Couldn\u2019t add item \u2014 try again", 'error');
+      submitBtn.classList.remove('btn-loading');
+      submitBtn.disabled = false;
+    });
+}
+
+// ================================================================
 // INIT
 // ================================================================
 document.addEventListener('DOMContentLoaded', function() {
   initPinScreen();
+
+  // FAB + Modal listeners
+  document.getElementById('fab-add').addEventListener('click', showAddItemModal);
+  document.getElementById('add-cancel').addEventListener('click', hideAddItemModal);
+  document.getElementById('add-submit').addEventListener('click', submitNewItem);
+  document.getElementById('add-modal').addEventListener('click', function(e) {
+    if (e.target === this) hideAddItemModal();
+  });
 
   // Register service worker
   if ('serviceWorker' in navigator) {

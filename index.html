@@ -224,6 +224,31 @@
       border-color: var(--primary);
     }
 
+    /* === SEARCH BAR === */
+    .search-bar {
+      padding: 12px 20px 0;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .search-input {
+      font-family: 'Quicksand', sans-serif;
+      font-size: 0.92rem;
+      font-weight: 500;
+      width: 100%;
+      padding: 10px 16px;
+      border: 2px solid var(--secondary-bg);
+      border-radius: 10px;
+      background: var(--cards);
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .search-input:focus {
+      border-color: var(--primary);
+    }
+
     /* === MAIN CONTENT === */
     .main {
       padding: 0 20px 40px;
@@ -621,6 +646,10 @@
         padding: 10px 14px;
       }
 
+      .search-bar {
+        padding: 10px 14px 0;
+      }
+
       .main {
         padding: 0 14px 30px;
       }
@@ -658,17 +687,20 @@
   </header>
 
   <div class="filter-bar">
-    <button class="filter-pill active" data-category="all" onclick="setFilter('all')">All</button>
-    <button class="filter-pill" data-category="Health" onclick="setFilter('Health')">❤️ Health</button>
-    <button class="filter-pill" data-category="Car" onclick="setFilter('Car')">🚗 Car</button>
-    <button class="filter-pill" data-category="Beauty" onclick="setFilter('Beauty')">💄 Beauty</button>
-    <button class="filter-pill" data-category="Grooming" onclick="setFilter('Grooming')">✂️ Grooming</button>
-    <button class="filter-pill" data-category="Home" onclick="setFilter('Home')">🏠 Home</button>
-    <button class="filter-pill" data-category="Finance" onclick="setFilter('Finance')">💰 Finance</button>
-    <button class="filter-pill" data-category="Other" onclick="setFilter('Other')">📌 Other</button>
+    <button class="filter-pill active" data-category="all" data-label="All" onclick="setFilter('all')">All</button>
+    <button class="filter-pill" data-category="Health" data-label="❤️ Health" onclick="setFilter('Health')">❤️ Health</button>
+    <button class="filter-pill" data-category="Car" data-label="🚗 Car" onclick="setFilter('Car')">🚗 Car</button>
+    <button class="filter-pill" data-category="Beauty" data-label="💄 Beauty" onclick="setFilter('Beauty')">💄 Beauty</button>
+    <button class="filter-pill" data-category="Grooming" data-label="✂️ Grooming" onclick="setFilter('Grooming')">✂️ Grooming</button>
+    <button class="filter-pill" data-category="Home" data-label="🏠 Home" onclick="setFilter('Home')">🏠 Home</button>
+    <button class="filter-pill" data-category="Finance" data-label="💰 Finance" onclick="setFilter('Finance')">💰 Finance</button>
+    <button class="filter-pill" data-category="Other" data-label="📌 Other" onclick="setFilter('Other')">📌 Other</button>
   </div>
 
   <main class="main">
+    <div class="search-bar">
+      <input type="text" id="searchInput" class="search-input" placeholder="Search items..." oninput="handleSearch()">
+    </div>
     <div class="loading" id="loading">
       <div class="spinner"></div>
       <span class="loading-text">Loading your items...</span>
@@ -880,6 +912,7 @@
         document.getElementById('fieldNotes').value = editItem.notes || '';
       } else {
         title.textContent = 'Add new item';
+        document.getElementById('fieldLastDone').value = todayStr();
       }
 
       overlay.style.display = 'flex';
@@ -1084,6 +1117,7 @@
     // === STATE ===
     let items = [];
     let activeFilter = 'all';
+    let searchQuery = '';
     let gcalToken = sessionStorage.getItem('gcal_token') || null;
 
     // === UTILITIES ===
@@ -1303,9 +1337,16 @@
       const grid = document.getElementById('cardGrid');
       const empty = document.getElementById('emptyState');
 
-      const filtered = activeFilter === 'all'
+      let filtered = activeFilter === 'all'
         ? items
         : items.filter(i => i.category === activeFilter);
+
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        filtered = filtered.filter(i =>
+          i.name.toLowerCase().includes(q) || i.notes.toLowerCase().includes(q)
+        );
+      }
 
       const sorted = [...filtered].sort((a, b) => {
         const da = daysUntilDue(a.lastDone, a.frequency);
@@ -1346,6 +1387,26 @@
       if (soon) html += `<span class="stat-pill stat-amber">${soon} soon</span>`;
       if (onTrack) html += `<span class="stat-pill stat-green">${onTrack} on track</span>`;
       stats.innerHTML = html;
+
+      // Update page title
+      document.title = overdue ? `Upkeep (${overdue} overdue)` : 'Upkeep Dashboard';
+
+      // Update filter pill counts
+      document.querySelectorAll('.filter-pill').forEach(btn => {
+        const cat = btn.dataset.category;
+        const baseText = btn.dataset.label;
+        if (cat === 'all') {
+          btn.textContent = `All (${items.length})`;
+        } else {
+          const count = items.filter(i => i.category === cat).length;
+          btn.textContent = count ? `${baseText} (${count})` : baseText;
+        }
+      });
+    }
+
+    function handleSearch() {
+      searchQuery = document.getElementById('searchInput').value.trim();
+      renderCards();
     }
 
     function setFilter(category) {

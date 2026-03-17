@@ -725,7 +725,7 @@
           <textarea id="fieldNotes" placeholder="Optional notes..."></textarea>
         </div>
         <div class="form-actions">
-          <button type="submit" class="btn-primary">Save</button>
+          <button type="submit" class="btn-primary" id="submitBtn">Save</button>
         </div>
       </form>
     </div>
@@ -734,16 +734,306 @@
   <div class="toast-container" id="toastContainer"></div>
 
   <script>
-    // === STUBS (will be replaced in later tasks) ===
-    function openEditModal(id) {}
-    function handleDelete(btn, id) {}
-    function handleMarkDone(id) {}
-    function handleSubmit(e) { e.preventDefault(); }
-    function handleGCalClick() {}
-    function updateGCalButton() {}
-    function closeModal() { document.getElementById('modalOverlay').style.display = 'none'; }
-    function closeModalOnBackdrop(e) { if (e.target === e.currentTarget) closeModal(); }
-    function openModal() { document.getElementById('modalOverlay').style.display = 'flex'; }
+    // === GOOGLE CALENDAR ===
+    let tokenClient = null;
+
+    function initGCal() {
+      if (typeof google === 'undefined' || !google.accounts) return;
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: GCAL_CLIENT_ID,
+        scope: GCAL_SCOPE,
+        callback: (response) => {
+          if (response.access_token) {
+            gcalToken = response.access_token;
+            sessionStorage.setItem('gcal_token', gcalToken);
+            updateGCalButton();
+            showToast('Google Calendar connected');
+          }
+        }
+      });
+    }
+
+    function handleGCalClick() {
+      if (gcalToken) {
+        gcalToken = null;
+        sessionStorage.removeItem('gcal_token');
+        updateGCalButton();
+        showToast('Google Calendar disconnected');
+      } else {
+        if (!tokenClient) initGCal();
+        if (tokenClient) {
+          tokenClient.requestAccessToken();
+        } else {
+          showToast('Google sign-in not available', 'error');
+        }
+      }
+    }
+
+    function updateGCalButton() {
+      const btn = document.getElementById('gcalBtn');
+      if (gcalToken) {
+        btn.textContent = '✅ Calendar connected';
+        btn.classList.add('connected');
+      } else {
+        btn.textContent = 'Connect Google Calendar';
+        btn.classList.remove('connected');
+      }
+    }
+
+    async function gcalFetch(endpoint, options = {}) {
+      const res = await fetch(`https://www.googleapis.com/calendar/v3${endpoint}`, {
+        ...options,
+        headers: {
+          'Authorization': `Bearer ${gcalToken}`,
+          'Content-Type': 'application/json',
+          ...(options.headers || {})
+        }
+      });
+      if (res.status === 401) {
+        gcalToken = null;
+        sessionStorage.removeItem('gcal_token');
+        updateGCalButton();
+        throw new Error('Calendar session expired... please reconnect');
+      }
+      if (!res.ok && res.status !== 404) {
+        throw new Error(`Calendar error: ${res.status}`);
+      }
+      if (res.status === 204 || res.status === 404) return null;
+      return res.json();
+    }
+
+    async function createGCalEvent(itemName, dateStr) {
+      const data = await gcalFetch('/calendars/primary/events', {
+        method: 'POST',
+        body: JSON.stringify({
+          summary: itemName,
+          start: { date: dateStr },
+          end: { date: dateStr },
+          colorId: '2',
+          reminders: {
+            useDefault: false,
+            overrides: [{ method: 'popup', minutes: 4320 }]
+          }
+        })
+      });
+      return data?.id || '';
+    }
+
+    async function deleteGCalEvent(eventId) {
+      await gcalFetch(`/calendars/primary/events/${eventId}`, {
+        method: 'DELETE'
+      });
+    }
+
+    async function createGCalEventForItem(item) {
+      const next = nextDueDate(item.lastDone, item.frequency);
+      if (!next) return;
+      try {
+        const eventId = await createGCalEvent(item.name, next);
+        if (eventId) {
+          await updateItem(item.id, { ...item, calendarEventId: eventId });
+          const idx = items.findIndex(i => i.id === item.id);
+          if (idx >= 0) items[idx].calendarEventId = eventId;
+        }
+      } catch (err) {
+        console.error('GCal event creation failed:', err);
+      }
+    }
+
+    async function recreateGCalEvent(item) {
+      try {
+        if (item.calendarEventId) {
+          await deleteGCalEvent(item.calendarEventId).catch(() => {});
+        }
+        await createGCalEventForItem(item);
+      } catch (err) {
+        console.error('GCal event recreation failed:', err);
+      }
+    }
+
+    // === MODAL ===
+    function openModal(editItem = null) {
+      const overlay = document.getElementById('modalOverlay');
+      const title = document.getElementById('modalTitle');
+      const form = document.getElementById('itemForm');
+      const editingId = document.getElementById('editId');
+      const submitBtn = document.getElementById('submitBtn');
+
+      form.reset();
+      editingId.value = '';
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Save';
+
+      if (editItem) {
+        title.textContent = 'Edit item';
+        editingId.value = editItem.id;
+        document.getElementById('fieldName').value = editItem.name;
+        document.getElementById('fieldCategory').value = editItem.category;
+        const { value, unit } = daysToFreqInput(editItem.frequency);
+        document.getElementById('fieldFreqValue').value = value;
+        document.getElementById('fieldFreqUnit').value = unit;
+        document.getElementById('fieldLastDone').value = editItem.lastDone || '';
+        document.getElementById('fieldNotes').value = editItem.notes || '';
+      } else {
+        title.textContent = 'Add new item';
+      }
+
+      overlay.style.display = 'flex';
+    }
+
+    function daysToFreqInput(days) {
+      if (days % 365 === 0) return { value: days / 365, unit: 'years' };
+      if (days % 30 === 0) return { value: days / 30, unit: 'months' };
+      if (days % 7 === 0) return { value: days / 7, unit: 'weeks' };
+      return { value: days, unit: 'days' };
+    }
+
+    function closeModal() {
+      document.getElementById('modalOverlay').style.display = 'none';
+    }
+
+    function closeModalOnBackdrop(e) {
+      if (e.target === e.currentTarget) closeModal();
+    }
+
+    function openEditModal(itemId) {
+      const item = items.find(i => i.id === itemId);
+      if (item) openModal(item);
+    }
+
+    async function handleSubmit(e) {
+      e.preventDefault();
+      const submitBtn = document.getElementById('submitBtn');
+      const editingId = document.getElementById('editId').value;
+
+      const formData = {
+        name: document.getElementById('fieldName').value.trim(),
+        category: document.getElementById('fieldCategory').value,
+        frequency: freqToDays(
+          parseInt(document.getElementById('fieldFreqValue').value),
+          document.getElementById('fieldFreqUnit').value
+        ),
+        lastDone: document.getElementById('fieldLastDone').value || null,
+        notes: document.getElementById('fieldNotes').value.trim()
+      };
+
+      if (!formData.name || !formData.frequency || formData.frequency <= 0) {
+        showToast('Please fill in required fields', 'error');
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Saving...';
+
+      try {
+        if (editingId) {
+          const oldItem = items.find(i => i.id === editingId);
+          const updated = await updateItem(editingId, formData);
+          const idx = items.findIndex(i => i.id === editingId);
+          items[idx] = updated;
+
+          if (gcalToken && oldItem &&
+              (oldItem.frequency !== formData.frequency || oldItem.name !== formData.name)) {
+            await recreateGCalEvent(updated);
+          }
+
+          showToast('Item updated');
+        } else {
+          const created = await createItem(formData);
+          items.push(created);
+
+          if (gcalToken && created.lastDone) {
+            await createGCalEventForItem(created);
+          }
+
+          showToast('Item added');
+        }
+        closeModal();
+        renderCards();
+      } catch (err) {
+        showToast(`Save failed: ${err.message}`, 'error');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Save';
+      }
+    }
+
+    // === ACTIONS ===
+    async function handleMarkDone(itemId) {
+      const card = document.getElementById(`card-${itemId}`);
+      const loadingEl = card.querySelector('.card-loading');
+      loadingEl.style.display = 'flex';
+
+      try {
+        const item = items.find(i => i.id === itemId);
+        const today = todayStr();
+        const updates = { ...item, lastDone: today };
+
+        if (gcalToken) {
+          if (item.calendarEventId) {
+            await deleteGCalEvent(item.calendarEventId).catch(() => {});
+          }
+          const newNext = nextDueDate(today, item.frequency);
+          if (newNext) {
+            const eventId = await createGCalEvent(item.name, newNext);
+            updates.calendarEventId = eventId || '';
+          }
+        }
+
+        const updated = await updateItem(itemId, updates);
+        const idx = items.findIndex(i => i.id === itemId);
+        items[idx] = updated;
+        renderCards();
+        showToast(`${item.name} marked done`);
+      } catch (err) {
+        loadingEl.style.display = 'none';
+        showToast(`Failed to mark done: ${err.message}`, 'error');
+      }
+    }
+
+    const deleteTimers = {};
+
+    function handleDelete(btn, itemId) {
+      if (btn.classList.contains('confirming')) {
+        clearTimeout(deleteTimers[itemId]);
+        btn.classList.remove('confirming');
+        btn.textContent = '✕';
+        performDelete(itemId);
+      } else {
+        btn.classList.add('confirming');
+        btn.textContent = 'Confirm?';
+        deleteTimers[itemId] = setTimeout(() => {
+          btn.classList.remove('confirming');
+          btn.textContent = '✕';
+        }, 3000);
+      }
+    }
+
+    async function performDelete(itemId) {
+      const card = document.getElementById(`card-${itemId}`);
+      const loadingEl = card.querySelector('.card-loading');
+      loadingEl.style.display = 'flex';
+
+      try {
+        const item = items.find(i => i.id === itemId);
+
+        if (gcalToken && item.calendarEventId) {
+          await deleteGCalEvent(item.calendarEventId).catch(() => {});
+        }
+
+        await archiveItem(itemId);
+        items = items.filter(i => i.id !== itemId);
+        renderCards();
+        showToast(`${item.name} deleted`);
+      } catch (err) {
+        loadingEl.style.display = 'none';
+        showToast(`Failed to delete: ${err.message}`, 'error');
+      }
+    }
+
+    // Close modal on Escape
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeModal();
+    });
 
     // === CONFIG ===
     const NOTION_PROXY = 'https://corsproxy.io/?url=https://api.notion.com';
@@ -1036,6 +1326,7 @@
 
     // === INIT ===
     async function init() {
+      initGCal();
       const loading = document.getElementById('loading');
       const errorState = document.getElementById('errorState');
       const grid = document.getElementById('cardGrid');

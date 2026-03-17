@@ -648,7 +648,7 @@
       <div class="stats" id="stats"></div>
     </div>
     <div class="header-right">
-      <button class="btn-secondary" id="gcalBtn" onclick="handleGCalClick()">📅 Connect GCal</button>
+      <button class="btn-secondary" id="gcalBtn" onclick="handleGCalClick()">Connect Google Calendar</button>
       <button class="btn-primary" onclick="openModal()">+ Add Item</button>
     </div>
   </header>
@@ -969,13 +969,17 @@
         const updates = { ...item, lastDone: today };
 
         if (gcalToken) {
-          if (item.calendarEventId) {
-            await deleteGCalEvent(item.calendarEventId).catch(() => {});
-          }
-          const newNext = nextDueDate(today, item.frequency);
-          if (newNext) {
-            const eventId = await createGCalEvent(item.name, newNext);
-            updates.calendarEventId = eventId || '';
+          try {
+            if (item.calendarEventId) {
+              await deleteGCalEvent(item.calendarEventId).catch(() => {});
+            }
+            const newNext = nextDueDate(today, item.frequency);
+            if (newNext) {
+              const eventId = await createGCalEvent(item.name, newNext);
+              updates.calendarEventId = eventId || '';
+            }
+          } catch (gcalErr) {
+            console.error('GCal error during mark done:', gcalErr);
           }
         }
 

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Upkeep</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Space+Mono&display=swap" rel="stylesheet">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#FFFFFF">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Upkeep">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+</head>
+<body>
+
+  <!-- ============================================================
+       PIN SCREEN
+       ============================================================ -->
+  <div id="pin-screen" class="pin-screen">
+    <h1 class="pin-title">Upkeep</h1>
+    <p class="pin-subtitle">Enter your PIN</p>
+
+    <div class="pin-dots" id="pin-dots">
+      <span class="pin-dot"></span>
+      <span class="pin-dot"></span>
+      <span class="pin-dot"></span>
+      <span class="pin-dot"></span>
+    </div>
+
+    <div class="pin-error" id="pin-error"></div>
+
+    <div class="pin-keypad">
+      <button class="pin-key" data-key="1">1</button>
+      <button class="pin-key" data-key="2">2</button>
+      <button class="pin-key" data-key="3">3</button>
+      <button class="pin-key" data-key="4">4</button>
+      <button class="pin-key" data-key="5">5</button>
+      <button class="pin-key" data-key="6">6</button>
+      <button class="pin-key" data-key="7">7</button>
+      <button class="pin-key" data-key="8">8</button>
+      <button class="pin-key" data-key="9">9</button>
+      <button class="pin-key pin-key-blank" disabled></button>
+      <button class="pin-key" data-key="0">0</button>
+      <button class="pin-key pin-key-back" data-key="back">&#x232B;</button>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       DASHBOARD
+       ============================================================ -->
+  <div id="dashboard" class="dashboard hidden">
+
+    <!-- Offline Banner -->
+    <div id="offline-banner" class="offline-banner hidden">
+      Offline &mdash; showing last updated data
+    </div>
+
+    <!-- Header -->
+    <header class="header">
+      <h1 class="header-title">Upkeep</h1>
+      <p class="header-date" id="header-date"></p>
+    </header>
+
+    <!-- Skeleton Loading -->
+    <div id="skeleton" class="skeleton-container">
+      <div class="skeleton-section-header"></div>
+      <div class="skeleton-card"></div>
+      <div class="skeleton-card"></div>
+      <div class="skeleton-section-header"></div>
+      <div class="skeleton-card"></div>
+    </div>
+
+    <!-- Content (hidden while loading) -->
+    <main id="content" class="content hidden">
+
+      <!-- Overdue Section -->
+      <section id="section-overdue" class="section hidden">
+        <div class="section-header">
+          <span class="dot dot-red pulsing"></span>
+          <span class="section-label">Overdue</span>
+          <span class="section-count" id="overdue-count"></span>
+        </div>
+        <div id="overdue-cards" class="card-list"></div>
+      </section>
+
+      <!-- Due This Week Section -->
+      <section id="section-due-soon" class="section hidden">
+        <div class="section-header">
+          <span class="dot dot-yellow"></span>
+          <span class="section-label">Due This Week</span>
+          <span class="section-count" id="due-soon-count"></span>
+        </div>
+        <div id="due-soon-cards" class="card-list"></div>
+      </section>
+
+      <!-- Browse by Category -->
+      <section class="section">
+        <h2 class="section-title">Browse by Category</h2>
+        <div id="category-bars" class="category-bars">
+          <!-- Dynamically generated category collapsible bars -->
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- FAB — Add Item -->
+    <button id="fab-add" class="fab" aria-label="Add item">+</button>
+
+    <!-- Add Item Modal -->
+    <div id="add-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2 class="modal-title">Add Item</h2>
+
+        <label class="form-label" for="add-name">Item Name</label>
+        <input class="form-input" type="text" id="add-name" placeholder="e.g. Oil Change" required>
+
+        <label class="form-label" for="add-category">Category</label>
+        <select class="form-input form-select" id="add-category">
+          <option value="Car">🚗 Car</option>
+          <option value="Health">🏥 Health</option>
+          <option value="Grooming">✂️ Grooming</option>
+          <option value="Home">🏠 Home</option>
+        </select>
+
+        <label class="form-label" for="add-frequency">Frequency (days)</label>
+        <input class="form-input" type="number" id="add-frequency" placeholder="e.g. 90" min="1" required>
+
+        <label class="form-label" for="add-notes">Notes (optional)</label>
+        <textarea class="form-input form-textarea" id="add-notes" placeholder="Any reminders or preferences..." rows="2"></textarea>
+
+        <label class="form-label" for="add-cost">Cost (optional)</label>
+        <input class="form-input" type="number" id="add-cost" placeholder="$0.00" step="0.01" min="0">
+
+        <div class="modal-actions">
+          <button class="btn-modal btn-cancel" id="add-cancel">Cancel</button>
+          <button class="btn-modal btn-submit" id="add-submit">Add Item</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

@@ -610,7 +610,7 @@ function submitNewItem() {
   // Build Notion properties
   var properties = {
     'Item Name': { title: [{ text: { content: name } }] },
-    'Category': { select: { name: category } },
+    'Category': { multi_select: [{ name: category }] },
     'Frequency (days)': { number: frequency },
     'Last Done': { date: { start: today } }
   };

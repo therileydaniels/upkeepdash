@@ -2,10 +2,8 @@
 // CONFIGURATION
 // ================================================================
 const CONFIG = {
-  // Replace with your deployed Apps Script Web App URL
   API_URL: 'https://script.google.com/macros/s/AKfycbxSv0FjYBL_NpWKZp9KDDOXYLLwI3vX0aa5yzBBFwiD6emwYYmIOO5_NCWK5KpSCSaLlQ/exec',
   STORAGE_KEYS: {
-    DEVICE_TOKEN: 'upkeep_device_token',
     CACHED_ITEMS: 'upkeep_cached_items',
     CACHE_TIMESTAMP: 'upkeep_cache_ts'
   }
@@ -17,6 +15,7 @@ const CONFIG = {
 const CATEGORIES = {
   'Car':      { color: '#EF4444', soft: '#FEF2F2', icon: '\u{1F697}' },
   'Health':   { color: '#3B82F6', soft: '#EFF6FF', icon: '\u{1F3E5}' },
+  'Beauty':   { color: '#EC4899', soft: '#FDF2F8', icon: '\u{1F485}' },
   'Grooming': { color: '#8B5CF6', soft: '#F5F3FF', icon: '\u2702\uFE0F' },
   'Home':     { color: '#22C55E', soft: '#F0FDF4', icon: '\u{1F3E0}' }
 };
@@ -34,86 +33,24 @@ let isOnline = navigator.onLine;
 let expandedCardId = null;
 
 // ================================================================
-// PIN HANDLING
+// INIT LOAD
 // ================================================================
-let pinBuffer = '';
-
-function initPinScreen() {
-  var token = localStorage.getItem(CONFIG.STORAGE_KEYS.DEVICE_TOKEN);
-  if (token) {
-    showDashboard();
-    fetchItems(token);
-    return;
-  }
-
-  document.getElementById('pin-screen').classList.remove('hidden');
-  document.querySelectorAll('.pin-key[data-key]').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-      handlePinKey(btn.dataset.key);
-    });
-  });
-}
-
-function handlePinKey(key) {
-  if (key === 'back') {
-    pinBuffer = pinBuffer.slice(0, -1);
-    document.getElementById('pin-error').textContent = '';
-  } else if (pinBuffer.length < 4) {
-    pinBuffer += key;
-  }
-  updatePinDots();
-  if (pinBuffer.length === 4) {
-    submitPin(pinBuffer);
-  }
-}
-
-function updatePinDots() {
-  document.querySelectorAll('.pin-dot').forEach(function(dot, i) {
-    dot.classList.toggle('filled', i < pinBuffer.length);
-  });
-}
-
-function submitPin(pin) {
-  fetch(CONFIG.API_URL + '?action=getItems&pin=' + encodeURIComponent(pin))
-    .then(function(response) { return response.json(); })
-    .then(function(data) {
-      if (data.error) {
-        document.getElementById('pin-error').textContent = 'Wrong PIN';
-        var dots = document.getElementById('pin-dots');
-        dots.classList.add('shake');
-        setTimeout(function() {
-          dots.classList.remove('shake');
-          pinBuffer = '';
-          updatePinDots();
-        }, 400);
-        return;
-      }
-      if (data.deviceToken) {
-        localStorage.setItem(CONFIG.STORAGE_KEYS.DEVICE_TOKEN, data.deviceToken);
-      }
-      cacheItems(data.items);
-      currentItems = data.items;
-      showDashboard();
-      renderItems(currentItems);
-    })
-    .catch(function() {
-      document.getElementById('pin-error').textContent = 'Connection error';
-      pinBuffer = '';
-      updatePinDots();
-    });
+function initApp() {
+  showDashboard();
+  fetchItems();
 }
 
 // ================================================================
 // DATA FETCHING
 // ================================================================
-function fetchItems(token) {
+function fetchItems() {
   showSkeleton(true);
-  fetch(CONFIG.API_URL + '?action=getItems&token=' + encodeURIComponent(token))
+  fetch(CONFIG.API_URL + '?action=getItems')
     .then(function(response) { return response.json(); })
     .then(function(data) {
       if (data.error) {
-        localStorage.removeItem(CONFIG.STORAGE_KEYS.DEVICE_TOKEN);
-        location.reload();
+        showSkeleton(false);
+        showToast('Error loading items: ' + data.error, 'error');
         return;
       }
       currentItems = data.items;
@@ -446,8 +383,7 @@ function getBadgeInfo(item) {
 // GENERIC PROXY HELPER
 // ================================================================
 function apiCall(action, params) {
-  var token = localStorage.getItem(CONFIG.STORAGE_KEYS.DEVICE_TOKEN);
-  var url = CONFIG.API_URL + '?action=' + action + '&token=' + encodeURIComponent(token);
+  var url = CONFIG.API_URL + '?action=' + action;
   Object.keys(params || {}).forEach(function(key) {
     url += '&' + key + '=' + encodeURIComponent(params[key]);
   });
@@ -526,7 +462,7 @@ function performMarkDone(itemId, cost, confirmBtn) {
         showToast('Item marked done \u2713');
       }
       expandedCardId = null;
-      fetchItems(localStorage.getItem(CONFIG.STORAGE_KEYS.DEVICE_TOKEN));
+      fetchItems();
     })
     .catch(function() {
       confirmBtn.classList.remove('btn-loading');
@@ -538,8 +474,6 @@ function performMarkDone(itemId, cost, confirmBtn) {
 // UI HELPERS
 // ================================================================
 function showDashboard() {
-  document.getElementById('pin-screen').classList.add('hidden');
-  document.getElementById('dashboard').classList.remove('hidden');
   setHeaderDate();
 }
 
@@ -718,7 +652,7 @@ function submitNewItem() {
     .then(function() {
       showToast('Item added \u2713');
       hideAddItemModal();
-      fetchItems(localStorage.getItem(CONFIG.STORAGE_KEYS.DEVICE_TOKEN));
+      fetchItems();
     })
     .catch(function() {
       showToast("Couldn\u2019t add item \u2014 try again", 'error');
@@ -731,7 +665,7 @@ function submitNewItem() {
 // INIT
 // ================================================================
 document.addEventListener('DOMContentLoaded', function() {
-  initPinScreen();
+  initApp();
 
   // FAB + Modal listeners
   document.getElementById('fab-add').addEventListener('click', showAddItemModal);

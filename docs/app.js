@@ -177,6 +177,12 @@ function buildCard(item) {
 
   collapsed.appendChild(iconWrap);
   collapsed.appendChild(info);
+  if (item.calendarEventId) {
+    var calIcon = el('span', 'card-cal-icon');
+    calIcon.textContent = '\ud83d\udcc5';
+    calIcon.title = 'Scheduled on calendar';
+    collapsed.appendChild(calIcon);
+  }
   collapsed.appendChild(badgeEl);
 
   // --- Expanded details ---
@@ -216,14 +222,30 @@ function buildCard(item) {
     expanded.appendChild(costRow);
   }
 
-  // Mark Done button
+  // Action buttons container
+  var actionBtns = el('div', 'action-buttons');
+
+  // Did It Today button
   var markDoneBtn = el('button', 'btn-mark-done');
   markDoneBtn.style.backgroundColor = cat.color;
-  markDoneBtn.textContent = 'Mark Done';
+  markDoneBtn.textContent = 'Did It Today';
   if (!isOnline) markDoneBtn.disabled = true;
-  expanded.appendChild(markDoneBtn);
+  actionBtns.appendChild(markDoneBtn);
 
-  // Confirm section
+  // Schedule Next button
+  var scheduleBtn = el('button', 'btn-schedule-next');
+  scheduleBtn.style.backgroundColor = cat.color;
+  scheduleBtn.textContent = item.calendarEventId ? '📅 Scheduled' : 'Schedule Next';
+  if (!isOnline) scheduleBtn.disabled = true;
+  if (item.calendarEventId) {
+    scheduleBtn.disabled = true;
+    scheduleBtn.classList.add('already-scheduled');
+  }
+  actionBtns.appendChild(scheduleBtn);
+
+  expanded.appendChild(actionBtns);
+
+  // Confirm section for Did It Today (cost input)
   var confirmSection = el('div', 'mark-done-confirm hidden');
 
   var costLabel = el('label', 'cost-label');
@@ -258,6 +280,7 @@ function buildCard(item) {
   markDoneBtn.addEventListener('click', function(e) {
     e.stopPropagation();
     markDoneBtn.classList.add('hidden');
+    scheduleBtn.classList.add('hidden');
     confirmSection.classList.remove('hidden');
     costInput.focus();
   });
@@ -265,7 +288,12 @@ function buildCard(item) {
   confirmBtn.addEventListener('click', function(e) {
     e.stopPropagation();
     var cost = costInput.value ? parseFloat(costInput.value) : null;
-    performMarkDone(item.id, cost, confirmBtn);
+    performDidItToday(item.id, cost, confirmBtn);
+  });
+
+  scheduleBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    performScheduleNext(item.id, scheduleBtn);
   });
 
   // Prevent input clicks from collapsing card
@@ -359,8 +387,10 @@ function handleCardToggle(card) {
 
 function resetMarkDoneState(card) {
   var markDoneBtn = card.querySelector('.btn-mark-done');
+  var scheduleBtn = card.querySelector('.btn-schedule-next');
   var confirmSection = card.querySelector('.mark-done-confirm');
   if (markDoneBtn) markDoneBtn.classList.remove('hidden');
+  if (scheduleBtn) scheduleBtn.classList.remove('hidden');
   if (confirmSection) {
     confirmSection.classList.add('hidden');
     var input = confirmSection.querySelector('.cost-input');
@@ -391,17 +421,16 @@ function apiCall(action, params) {
 }
 
 // ================================================================
-// MARK DONE (uses generic proxy)
+// DID IT TODAY — updates Notion only (Last Done, costs, clears old calendar event)
 // ================================================================
-function performMarkDone(itemId, cost, confirmBtn) {
+function performDidItToday(itemId, cost, confirmBtn) {
   if (!isOnline) {
-    showToast('Cannot mark done while offline', 'error');
+    showToast('Cannot update while offline', 'error');
     return;
   }
 
   confirmBtn.classList.add('btn-loading');
 
-  // Find the item in currentItems for its data
   var item = currentItems.find(function(i) { return i.id === itemId; });
   if (!item) {
     showToast("Couldn\u2019t find item", 'error');
@@ -410,12 +439,11 @@ function performMarkDone(itemId, cost, confirmBtn) {
   }
 
   var today = new Date().toISOString().split('T')[0];
-  var calendarSynced = true;
 
-  // 1. Update Notion: Last Done, costs, clear Last Reminder Sent
   var properties = {
     'Last Done': { date: { start: today } },
-    'Last Reminder Sent': { date: null }
+    'Last Reminder Sent': { date: null },
+    'Calendar Event ID': { rich_text: [] }
   };
   if (cost !== null) {
     properties['Last Cost'] = { number: cost };
@@ -424,26 +452,61 @@ function performMarkDone(itemId, cost, confirmBtn) {
 
   apiCall('updatePage', { pageId: itemId, properties: JSON.stringify(properties) })
     .then(function() {
-      // 2. Delete old calendar event
+      // Delete old calendar event since the task is done
       if (item.calendarEventId) {
         return apiCall('deleteCalendarEvent', { eventId: item.calendarEventId });
       }
     })
     .then(function() {
-      // 3. Create new calendar event at Next Due
-      if (item.frequencyDays) {
-        var nextDue = new Date(today + 'T00:00:00');
-        nextDue.setDate(nextDue.getDate() + item.frequencyDays);
-        var nextDueISO = nextDue.toISOString().split('T')[0];
-        var cat = getCategoryInfo(item.category);
-        var title = cat.icon + ' ' + item.name + ' Due';
-        return apiCall('createCalendarEvent', { title: title, date: nextDueISO });
-      }
-      return { success: false };
+      confirmBtn.classList.remove('btn-loading');
+      showToast('Marked done \u2713');
+      expandedCardId = null;
+      fetchItems();
+    })
+    .catch(function() {
+      confirmBtn.classList.remove('btn-loading');
+      showToast("Couldn\u2019t save \u2014 try again", 'error');
+    });
+}
+
+// SCHEDULE NEXT — creates a calendar event for the next due date
+// ================================================================
+function performScheduleNext(itemId, scheduleBtn) {
+  if (!isOnline) {
+    showToast('Cannot schedule while offline', 'error');
+    return;
+  }
+
+  scheduleBtn.classList.add('btn-loading');
+
+  var item = currentItems.find(function(i) { return i.id === itemId; });
+  if (!item) {
+    showToast("Couldn\u2019t find item", 'error');
+    scheduleBtn.classList.remove('btn-loading');
+    return;
+  }
+
+  if (!item.frequencyDays) {
+    showToast('No frequency set for this item', 'error');
+    scheduleBtn.classList.remove('btn-loading');
+    return;
+  }
+
+  // Delete existing calendar event first if there is one
+  var deletePromise = item.calendarEventId
+    ? apiCall('deleteCalendarEvent', { eventId: item.calendarEventId })
+    : Promise.resolve();
+
+  deletePromise
+    .then(function() {
+      // Create calendar event at Next Due date
+      var cat = getCategoryInfo(item.category);
+      var title = cat.icon + ' ' + item.name + ' Due';
+      return apiCall('createCalendarEvent', { title: title, date: item.nextDue });
     })
     .then(function(calResult) {
-      // 4. Store new Calendar Event ID in Notion
       if (calResult && calResult.eventId) {
+        // Store new Calendar Event ID in Notion
         return apiCall('updatePage', {
           pageId: itemId,
           properties: JSON.stringify({
@@ -451,22 +514,18 @@ function performMarkDone(itemId, cost, confirmBtn) {
           })
         });
       } else {
-        calendarSynced = false;
+        throw new Error('Calendar event creation failed');
       }
     })
     .then(function() {
-      confirmBtn.classList.remove('btn-loading');
-      if (!calendarSynced) {
-        showToast('Done \u2014 but calendar sync failed', 'error');
-      } else {
-        showToast('Item marked done \u2713');
-      }
+      scheduleBtn.classList.remove('btn-loading');
+      showToast('Scheduled on calendar \ud83d\udcc5');
       expandedCardId = null;
       fetchItems();
     })
     .catch(function() {
-      confirmBtn.classList.remove('btn-loading');
-      showToast("Couldn\u2019t save \u2014 try again", 'error');
+      scheduleBtn.classList.remove('btn-loading');
+      showToast("Couldn\u2019t schedule \u2014 try again", 'error');
     });
 }
 
@@ -547,8 +606,8 @@ function formatCost(value) {
 window.addEventListener('online', function() {
   isOnline = true;
   document.getElementById('offline-banner').classList.add('hidden');
-  // Re-enable Mark Done buttons
-  document.querySelectorAll('.btn-mark-done').forEach(function(btn) {
+  // Re-enable action buttons
+  document.querySelectorAll('.btn-mark-done, .btn-schedule-next:not(.already-scheduled)').forEach(function(btn) {
     btn.disabled = false;
   });
   var token = localStorage.getItem(CONFIG.STORAGE_KEYS.DEVICE_TOKEN);
@@ -558,7 +617,7 @@ window.addEventListener('online', function() {
 window.addEventListener('offline', function() {
   isOnline = false;
   document.getElementById('offline-banner').classList.remove('hidden');
-  document.querySelectorAll('.btn-mark-done').forEach(function(btn) {
+  document.querySelectorAll('.btn-mark-done, .btn-schedule-next').forEach(function(btn) {
     btn.disabled = true;
   });
 });

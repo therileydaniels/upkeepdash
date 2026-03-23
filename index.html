@@ -383,10 +383,18 @@
       line-height: 1.4;
     }
 
-    /* === CARD DONE BUTTON === */
-    .btn-done {
-      width: 100%;
+    /* === ACTION BUTTONS === */
+    .action-buttons {
+      display: flex;
+      gap: 8px;
       margin-top: auto;
+    }
+    .btn-done, .btn-schedule {
+      flex: 1;
+    }
+    .btn-schedule:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
     }
 
     /* === CARD LOADING OVERLAY === */
@@ -1127,18 +1135,12 @@
       try {
         const item = items.find(i => i.id === itemId);
         const today = todayStr();
-        const updates = { ...item, lastDone: today };
+        const updates = { ...item, lastDone: today, calendarEventId: '' };
 
-        if (gcalToken) {
+        // Delete old calendar event since task is done
+        if (gcalToken && item.calendarEventId) {
           try {
-            if (item.calendarEventId) {
-              await deleteGCalEvent(item.calendarEventId).catch(() => {});
-            }
-            const newNext = nextDueDate(today, item.frequency);
-            if (newNext) {
-              const eventId = await createGCalEvent(item.name, newNext);
-              updates.calendarEventId = eventId || '';
-            }
+            await deleteGCalEvent(item.calendarEventId).catch(() => {});
           } catch (gcalErr) {
             console.error('GCal error during mark done:', gcalErr);
           }
@@ -1152,6 +1154,47 @@
       } catch (err) {
         loadingEl.style.display = 'none';
         showToast(`Failed to mark done: ${err.message}`, 'error');
+      }
+    }
+
+    function handleScheduleNext(itemId) {
+      const card = document.getElementById(`card-${itemId}`);
+      const btn = card.querySelector('.btn-schedule');
+      btn.disabled = true;
+      btn.textContent = 'Scheduling...';
+      performScheduleNext(itemId, btn);
+    }
+
+    async function performScheduleNext(itemId, btn) {
+      try {
+        const item = items.find(i => i.id === itemId);
+        if (!item) throw new Error('Item not found');
+
+        const nextDue = nextDueDate(item.lastDone, item.frequency);
+        if (!nextDue) throw new Error('No frequency set');
+
+        // Delete existing event if any
+        if (gcalToken && item.calendarEventId) {
+          await deleteGCalEvent(item.calendarEventId).catch(() => {});
+        }
+
+        if (!gcalToken) throw new Error('Google Calendar not connected');
+
+        const eventId = await createGCalEvent(item.name, nextDue);
+        if (!eventId) throw new Error('Failed to create calendar event');
+
+        const updates = { ...item, calendarEventId: eventId };
+        const updated = await updateItem(itemId, updates);
+        const idx = items.findIndex(i => i.id === itemId);
+        items[idx] = updated;
+        renderCards();
+        showToast('Scheduled on calendar \ud83d\udcc5');
+      } catch (err) {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Schedule Next';
+        }
+        showToast(`Couldn\u2019t schedule: ${err.message}`, 'error');
       }
     }
 
@@ -1283,7 +1326,7 @@
       return `
         <div class="card ${isOverdue ? 'card-overdue' : ''}" data-id="${item.id}" id="card-${item.id}">
           <div class="card-header">
-            <span class="card-category" style="color:${cat.color}">${cat.emoji} ${item.category}</span>
+            <span class="card-category" style="color:${cat.color}">${cat.emoji} ${item.category}${item.calendarEventId ? ' 📅' : ''}</span>
             <div class="card-actions-top">
               <button class="btn-icon btn-edit" onclick="openEditModal('${item.id}')" title="Edit">\u270F</button>
               <button class="btn-icon btn-delete" data-id="${item.id}" onclick="handleDelete(this, '${item.id}')" title="Delete">\u2715</button>
@@ -1309,7 +1352,10 @@
             </div>
           </div>
           ${item.notes ? `<p class="card-notes">${escapeHtml(item.notes)}</p>` : ''}
-          <button class="btn-primary btn-done" onclick="handleMarkDone('${item.id}')">\u2713 Mark as Done</button>
+          <div class="action-buttons">
+            <button class="btn-primary btn-done" onclick="handleMarkDone('${item.id}')">Did It Today</button>
+            <button class="btn-primary btn-schedule" onclick="handleScheduleNext('${item.id}')" ${item.calendarEventId ? 'disabled' : ''}>${item.calendarEventId ? '\ud83d\udcc5 Scheduled' : 'Schedule Next'}</button>
+          </div>
           <div class="card-loading" style="display:none"><div class="spinner-small"></div></div>
         </div>
       `;
